@@ -55,6 +55,10 @@ jobs:
           APP=${{ steps.app-name.outputs.app }}
           REGION=$(grep -E '^primary_region\s*=\s*' fly.toml | sed -E "s/primary_region\s*=\s*\"([^\"]+)\"/\1/" || true)
           REGION=${REGION:-iad}
+          # Create app if it doesn't exist
+          if ! flyctl apps list | awk '{print $1}' | grep -qx "$APP"; then
+            flyctl apps create "$APP"
+          fi
           if ! flyctl volumes list -a "$APP" | grep -qE '^data\b'; then
             flyctl volumes create data --region "$REGION" --size 1 -a "$APP"
           fi
@@ -64,10 +68,17 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           APP: ${{ steps.app-name.outputs.app }}
           API_KEY: ${{ secrets.API_KEY }}
+          DATABASE_URL_SECRET: ${{ secrets.DATABASE_URL }}
         run: |
           set -euo pipefail
           if [ -n "${API_KEY:-}" ]; then
             flyctl secrets set API_KEY="$API_KEY" -a "$APP"
+          fi
+          # Prefer a GitHub secret if provided; otherwise default to persistent volume path
+          if [ -n "${DATABASE_URL_SECRET:-}" ]; then
+            flyctl secrets set DATABASE_URL="$DATABASE_URL_SECRET" -a "$APP"
+          else
+            flyctl secrets set DATABASE_URL="/data/calls.db" -a "$APP"
           fi
 
       - name: Deploy to Fly (remote builder)
@@ -76,4 +87,3 @@ jobs:
           APP: ${{ steps.app-name.outputs.app }}
         run: |
           flyctl deploy --app "$APP" --remote-only --detach
-

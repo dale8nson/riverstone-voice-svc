@@ -9,8 +9,6 @@ primary_region = "syd"
 [env]
 # Ensure the app binds to Fly's internal port
 BIND = "0.0.0.0:8080"
-# Persist SQLite under the mounted volume path
-DATABASE_URL = "/data/calls.db"
 
 [http_service]
   internal_port = 8080
