@@ -303,7 +303,10 @@ fn riverstone_kb(q: &str) -> String {
     "Sorry, I can refer this to a specialist or book a follow-up.".into()
 }
 
-async fn healthz() -> &'static str { "ok" }
+async fn healthz() -> &'static str {
+    tracing::info!("API key present: {}", std::env::var("API_KEY").is_ok());
+    "ok"
+}
 
 
 #[derive(Deserialize)]
