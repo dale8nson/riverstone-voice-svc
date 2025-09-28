@@ -1,0 +1,469 @@
+ 
+   
+Address Level  8,  222  Hoddle  St  Abbotsford  VIC  3067  Australia  
+C:  First  Chance  Group  Pty  Ltd ABN: 37  617  808  670  P:  1800  771  396  E:  hello@ﬁrstchance.com.au  W: apartments.com.au  
+ 
+Take-Home  Test  Voice-Only  Property  
+Sales
+ 
+AI
+ 
+Agent
+ 
+Goal  
+Ship  a  working  phone-based  voice  agent  that  qualifies  a  buyer,  answers  FAQs,  
+handles
+ 
+objections,
+ 
+and
+ 
+books
+ 
+an
+ 
+appointment
+ 
+for
+ 
+a
+ 
+(fictional)
+ 
+Melbourne
+ 
+apartment
+ 
+development.
+ 
+Any
+ 
+stack
+ 
+is
+ 
+fine.
+ 
+We
+ 
+just
+ 
+need
+ 
+to
+ 
+dial
+ 
+it
+ 
+from
+ 
+Australia
+ 
+and
+ 
+use
+ 
+it
+ 
+without
+ 
+logins.
+ 
+ 
+What  to  Submit  (must-have)  
+1.  Phone  number  we  can  call  
+ ○  Reachable  from  Australia;  no  PINs/logins.  Retell/Twilio/VAPI/etc.  all  
+fine.
+ 
+ 2.  Booking  that  actually  works  
+ ○  Agent  must  book  a  15-min  call  or  display-suite  visit.  
+ ○  Use  Calendly/Google  Calendar  or  a  mock  API  (see  spec  below).  
+ 3.  Call  transcript  +  recording  
+ ○  Provide  an  auto-generated  transcript  and  recording  link  for  each  
+call.
+ 
+ 4.  Short  README  (max  2  pages)  
+ ○  Stack  &  LLMs,  prompt/flow  design,  grounding  approach,  guardrails,  
+logging,
+ 
+cost
+ 
+to
+ 
+run
+ 
+100
+ 
+calls,
+ 
+what
+ 
+you’d
+ 
+improve
+ 
+next.
+ 
+ 5.  2-minute  Loom  
+ 
+ 
+
+ 
+   
+Address Level  8,  222  Hoddle  St  Abbotsford  VIC  3067  Australia  
+C:  First  Chance  Group  Pty  Ltd ABN: 37  617  808  670  P:  1800  771  396  E:  hello@ﬁrstchance.com.au  W: apartments.com.au  
+ ○  Quick  walkthrough  of  your  design  and  the  trade-offs  you  made.  
+ 6.  Code  or  config  peek  
+ ○  GitHub/zip  or  architecture  diagram  +  key  prompts/tools/functions.  
+ 
+ 
+Voice  Agent  —  Required  Behaviours  
+●  Natural,  interruptible  conversation  (barge-in  supported).  
+ ●  Latency  targets:  first  response  ≤  2.5s ,  turn-taking  gap  ≤  800ms .  
+ ●  Aussie-friendly  STT/TTS  (handle  Australian  English,  names,  addresses).  
+ ●  Qualification  (at  least):  budget  band,  bedrooms,  parking,  timeframe,  
+owner-occ
+ 
+vs
+ 
+investor,
+ 
+finance
+ 
+status,
+ 
+preferred
+ 
+suburb(s),
+ 
+contact
+ 
+details.
+ 
+ ●  FAQs  &  objections:  Answer  from  the  knowledge  pack;  never  bluff.  If  unsure,  
+offer
+ 
+a
+ 
+human
+ 
+follow-up.
+ 
+ ●  Appointment  booking:  Offer  2–3  concrete  slots,  confirm,  and  read  back  
+details.
+ 
+ ●  Summary  &  logging:  Generate  a  concise  lead  summary  and  store  a  JSON  
+of
+ 
+key
+ 
+fields
+ 
++
+ 
+outcome.
+ 
+ ●  Compliance:  No  legal/financial  advice,  recognise  “STOP/unsubscribe,”  and  
+offer
+ 
+professional
+ 
+referral
+ 
+where
+ 
+appropriate.
+ 
+ ●  Recovery:  Handle  silence  (“Are  you  still  there?”),  mishears  (“Did  you  
+mean…?”),
+ 
+and
+ 
+escalation
+ 
+(“I
+ 
+can
+ 
+get
+ 
+a
+ 
+specialist
+ 
+to
+ 
+call
+ 
+you
+ 
+back”).
+ 
+ 
+ 
+Property  Knowledge  Pack  (fictional  ground  truth)  
+Project:  Riverstone  Place  (Fictional)   
+
+ 
+   
+Address Level  8,  222  Hoddle  St  Abbotsford  VIC  3067  Australia  
+C:  First  Chance  Group  Pty  Ltd ABN: 37  617  808  670  P:  1800  771  396  E:  hello@ﬁrstchance.com.au  W: apartments.com.au  
+ Suburb:  Abbotsford,  VIC  
+Developer:  Harbourline  Developments  (fictional)  
+Builder:  Apex  Construct  (fictional)  
+Completion  target:  Q4  2027  (indicative)  
+Amenities:  Rooftop  pool,  gym,  co-working  lounge,  residents’  dining,  parcel  lockers,  
+EV
+ 
+chargers,
+ 
+bike
+ 
+storage
+ 
+Sustainability:  7.5+  NatHERS  target;  solar-assisted  common  power;  green  tariff  
+option
+ 
+Display  suite:  123  Swan  St,  Richmond  —  Sat/Sun  10:00–16:00;  weekdays  by  
+appointment
+ 
+Handoff  email  (test):  sales@riverstoneplace.example  
+Indicative  inventory  &  pricing  (do  NOT  promise  exact  stock):  
+●  1-Bed  (50–55  m²):  from  $585k ;  optional  car  +$65k  (limited)  
+ ●  2-Bed  (75–85  m²):  from  $845k ;  1  car  included  (most)  
+ ●  3-Bed  (105–120  m²):  from  $1.28m ;  2  cars  included  (limited)  
+ 
+ 
+Deposit:
+ 
+10%
+ 
+on
+ 
+exchange.
+ 
+Pilot
+ 
+1%
+ 
+holding
+ 
+(max
+ 
+$10k)
+ 
+can
+ 
+hold
+ 
+a
+ 
+chosen
+ 
+apartment
+ 
+for
+ 
+14
+ 
+days
+ 
+before
+ 
+topping
+ 
+to
+ 
+10%
+ 
+(subject
+ 
+to
+ 
+approval,
+ 
+limited).
+ 
+ 
+ 
+Indicative
+ 
+strata
+ 
+(not
+ 
+a
+ 
+quote):
+ 
+1-Bed
+ 
+~$2.8–3.6k/yr;
+ 
+2-Bed
+ 
+~$3.6–4.6k/yr;
+ 
+3-Bed
+ 
+~$4.8–6.2k/yr.
+ 
+ 
+ 
+Common
+ 
+Q&A
+ 
+(model
+ 
+answers):
+ 
+ ●  Construction  start  target  late  2025;  completion  targeted  Q4  2027  
+(indicative).
+ 
+ ●  No  rental  guarantees;  can  refer  to  a  property  manager  for  market  
+guidance.
+ 
+ 
+ 
+
+None 
+  
+   
+Address Level  8,  222  Hoddle  St  Abbotsford  VIC  3067  Australia  
+C:  First  Chance  Group  Pty  Ltd ABN: 37  617  808  670  P:  1800  771  396  E:  hello@ﬁrstchance.com.au  W: apartments.com.au  
+ ●  Foreign  buyers  may  face  extra  approval/taxes;  agent  cannot  advise—offer  
+referral.
+ 
+ ●  Finance:  we  can  refer  to  a  broker;  no  personal  finance  advice.  
+ ●  Finishes:  limited  customisation  windows,  subject  to  availability/cost.  
+ ●  Parking:  limited  for  1-Beds  and  paid  extra;  not  guaranteed.  
+ 
+Offer  these  appointment  slots  (AEST):  
+●  Mon–Fri:  10:00,  13:00,  16:00  (video  or  display-suite)  
+ ●  Sat:  10:00,  12:00  (display-suite  preferred)  
+ 
+Lead  capture  (minimum):  name,  mobile,  email,  budget  band,  beds,  parking  need,  
+timeframe,
+ 
+finance
+ 
+status
+ 
+(pre-approved
+ 
+/
+ 
+in-progress
+ 
+/
+ 
+not
+ 
+started),
+ 
+preferred
+ 
+slot,
+ 
+notes.
+ 
+Recommendation  logic  (baseline):  
+●  Budget  <  $650k  →  steer  to  1-Bed;  warn  parking  is  limited/extra.  
+ ●  $650k–$1.1m  →  1-  or  2-Bed;  confirm  beds/parking/timeline.  
+ ●  >  $1.1m  →  include  3-Bed;  confirm  two  car  spaces.  
+ 
+ 
+Booking  —  Mock  API  Option  (if  you  don’t  wire  a  real  
+calendar)
+ 
+Expose  one  endpoint  your  agent  calls:  
+POST /book_appointment Body: 
+ 
+
+None 
+  
+   
+Address Level  8,  222  Hoddle  St  Abbotsford  VIC  3067  Australia  
+C:  First  Chance  Group  Pty  Ltd ABN: 37  617  808  670  P:  1800  771  396  E:  hello@ﬁrstchance.com.au  W: apartments.com.au  
+ 
+{   "name": "Alex Tran",   "phone": "+61400000001",   "email": "alex.tran@example.com",   "slot_iso": "2025-09-26T10:00:00+10:00",   "mode": "video|display-suite",   "notes": "2-bed, budget 900k, pre-approved" } Response: { "ok": true, "booking_id": "RS-20250926-1000", "message": "Booked Fri 26 Sep 10:00 AEST" } 
+Your  agent  should  read  the  response  and  speak  back  a  confirmation.  
+ 
+Logging  —  Minimum  JSON  per  call  
+{   "timestamp": "2025-09-23T11:04:00+10:00",   "caller_cli": "+614XXXXXXX",   "summary": "Investor, 2-bed, $850–950k, pre-approved, prefers Abbotsford.",   "qualification": {     "budget_band": "850k–950k",     "beds": 2,     "parking": 1,     "owner_occ": false,     "timeframe": "3–6 months",     "finance_status": "pre-approved",     "suburbs": ["Abbotsford","Richmond"]   },   "booking": {     "slot_iso": "2025-09-27T12:00:00+10:00",     "mode": "display-suite",     "booking_id": "RS-20250927-1200", 
+ 
+
+ 
+   
+Address Level  8,  222  Hoddle  St  Abbotsford  VIC  3067  Australia  
+C:  First  Chance  Group  Pty  Ltd ABN: 37  617  808  670  P:  1800  771  396  E:  hello@ﬁrstchance.com.au  W: apartments.com.au  
+ 
+    "status": "confirmed"   },   "compliance_flags": [],   "transcript_url": "https://…",   "recording_url": "https://…" } 
+ 
+What  We’ll  Test  (we’ll  place  3–5  calls)  
+1.  Price-sensitive  owner-occupier:  $600–650k  budget,  wants  parking,  
+move-in
+ 
+12+
+ 
+months,
+ 
+not
+ 
+pre-approved.
+ 
+ 2.  Investor,  pre-approved:  $900k,  wants  2-Bed,  timeline  3–6  months,  asks  
+about
+ 
+yields
+ 
+(should
+ 
+decline
+ 
+to
+ 
+advise;
+ 
+offer
+ 
+referral).
+ 
+ 3.  Foreign  buyer  probe:  asks  about  FIRB  and  stamp  duty  surcharges  (should  
+not
+ 
+advise;
+ 
+offer
+ 
+referral
+ 
++
+ 
+book
+ 
+consult).
+ 
+ 4.  Objection  handling:  “Strata  sounds  high”  /  “Can  you  guarantee  completion  
+date?”
+ 
+ 5.  Unsubscribe:  Says  “STOP”  or  “Don’t  contact  me.”  
+ 
+Constraints  &  Notes  
+●  Treat  the  knowledge  above  as  authoritative  for  the  test.  
+ ●  Use  only  test  numbers/emails;  no  real  personal  data.  
+ ●  If  you  SMS/email  confirmations,  route  to  your  own  test  inbox/number.  
+ ●  Keep  the  entire  build  callable  within  4–6  hours  of  effort—show  working  
+value
+ 
+fast
+ 
+over
+ 
+perfection.
+ 
+ 
+ 
+
