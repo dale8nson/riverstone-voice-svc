@@ -5,6 +5,9 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# Use nightly toolchain for edition 2024 support
+RUN rustup toolchain install nightly && rustup default nightly
+
 # Leverage caching: copy manifests first
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir -p src && echo "fn main(){}" > src/main.rs && \
@@ -28,4 +31,3 @@ ENV BIND=0.0.0.0:8080
 EXPOSE 8080
 
 CMD ["/app/riverstone-voice-svc"]
-
