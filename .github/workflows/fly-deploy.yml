@@ -1,0 +1,79 @@
+name: CI + Deploy to Fly.io
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: {}
+
+concurrency:
+  group: fly-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --locked --all
+
+  deploy:
+    name: Deploy
+    needs: test
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://fly.io/apps/${{ steps.app-name.outputs.app }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read app name
+        id: app-name
+        run: |
+          APP=$(grep -E '^app\s*=\s*' fly.toml | sed -E "s/app\s*=\s*\"([^\"]+)\"/\1/")
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@v1
+
+      - name: Ensure volume exists (best-effort)
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          APP=${{ steps.app-name.outputs.app }}
+          REGION=$(grep -E '^primary_region\s*=\s*' fly.toml | sed -E "s/primary_region\s*=\s*\"([^\"]+)\"/\1/" || true)
+          REGION=${REGION:-iad}
+          if ! flyctl volumes list -a "$APP" | grep -qE '^data\b'; then
+            flyctl volumes create data --region "$REGION" --size 1 -a "$APP"
+          fi
+
+      - name: Set secrets (optional)
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          APP: ${{ steps.app-name.outputs.app }}
+          API_KEY: ${{ secrets.API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${API_KEY:-}" ]; then
+            flyctl secrets set API_KEY="$API_KEY" -a "$APP"
+          fi
+
+      - name: Deploy to Fly (remote builder)
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          APP: ${{ steps.app-name.outputs.app }}
+        run: |
+          flyctl deploy --app "$APP" --remote-only --detach
+

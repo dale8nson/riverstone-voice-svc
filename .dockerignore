@@ -1,0 +1,12 @@
+target
+**/target
+**/*.rs.bk
+.git
+.gitignore
+.DS_Store
+node_modules
+*.log
+tmp
+.env
+.env.*
+docker-compose.yml

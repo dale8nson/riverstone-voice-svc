@@ -124,11 +124,12 @@ async fn main() -> anyhow::Result<()> {
             .add_directive("riverstone_voice_svc=info".parse().unwrap()))
         .init();
 
-    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:calls.db".into());
+    let raw_db = std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:calls.db".into());
+    let db_url = if raw_db.starts_with("sqlite:") { raw_db } else { format!("sqlite:{raw_db}") };
     let api_key = std::env::var("API_KEY").unwrap_or_else(|_| "dev-key".into());
     let bind = std::env::var("BIND").unwrap_or_else(|_| "0.0.0.0:3005".into());
 
-    let opts = SqliteConnectOptions::from_str(&format!("sqlite:{db_url}"))?
+    let opts = SqliteConnectOptions::from_str(&db_url)?
         .create_if_missing(true);
     let db = SqlitePool::connect_with(opts).await?;
     sqlx::query(CREATE_CALLS_TABLE_SQL).execute(&db).await?;
