@@ -34,6 +34,7 @@ fn build_app() -> Router<AppState> {
         .route("/healthz", get(healthz))
         .route("/book_appointment", post(book_appointment))
         .route("/log_call", post(log_call))
+        .route("/calls/recent", get(calls_recent))
         .route("/webhooks/call/ended", post(webhook_call_ended))
         .route("/kb", get(kb_lookup))
         .layer(
@@ -94,7 +95,8 @@ struct CallLog {
 #[derive(Clone)]
 struct AppState {
     db: Arc<SqlitePool>,
-    api_key: Arc<String>
+    api_key: Arc<String>,
+    forward_url: Option<String>,
 }
 
 const CREATE_CALLS_TABLE_SQL: &str = r#"
@@ -137,7 +139,8 @@ async fn main() -> anyhow::Result<()> {
     // Backfill any missing `booking` records from older payloads and ensure booking_id exists
     backfill_bookings(&db).await.ok();
 
-    let state = AppState { db: Arc::new(db), api_key: Arc::new(api_key) };
+    let forward_url = std::env::var("FORWARD_WEBHOOK_URL").ok();
+    let state = AppState { db: Arc::new(db), api_key: Arc::new(api_key), forward_url };
     let app = build_app()
         .route("/readyz", get(readyz))      // add readiness
         .route("/health", get(healthz))     // optional alias
@@ -219,13 +222,17 @@ async fn log_call(
 
     let q = serde_json::to_string(&log.qualification).unwrap_or("{}".into());
     let normalized_booking = normalize_booking(log.booking.as_ref(), &log.qualification);
-    let b = match normalized_booking {
-        Some(val) => serde_json::to_string(&val).unwrap_or("null".into()),
+    let b = match &normalized_booking {
+        Some(val) => serde_json::to_string(val).unwrap_or("null".into()),
         None => "null".into(),
     };
     let flags = serde_json::to_string(&log.compliance_flags).unwrap_or("[]".into());
 
-    sqlx::query(r#"INSERT INTO calls
+    // Clone optional fields we need both for DB insert and forwarding payload
+    let transcript_url = log.transcript_url.clone();
+    let recording_url = log.recording_url.clone();
+
+    let res = sqlx::query(r#"INSERT INTO calls
       (ts, caller_cli, summary, qualification, booking, compliance_flags, transcript_url, recording_url)
       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"#)
       .bind(&log.timestamp)
@@ -234,13 +241,39 @@ async fn log_call(
       .bind(q)
       .bind(b)
       .bind(flags)
-      .bind(log.transcript_url)
-      .bind(log.recording_url)
+      .bind(transcript_url.clone())
+      .bind(recording_url.clone())
       .execute(&*state.db)
       .await
       .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "db error"))?;
 
+    // Optionally forward to external webhook
+    if let Some(url) = state.forward_url.clone() {
+        let forward_booking = normalized_booking.clone().unwrap_or(serde_json::Value::Null);
+        let payload = serde_json::json!({
+            "id": res.last_insert_rowid(),
+            "ts": log.timestamp,
+            "caller_cli": log.caller_cli,
+            "summary": log.summary,
+            "qualification": log.qualification,
+            "booking": forward_booking,
+            "compliance_flags": log.compliance_flags,
+            "transcript_url": transcript_url,
+            "recording_url": recording_url,
+        });
+        spawn_forward(url, payload);
+    }
+
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+fn spawn_forward(url: String, payload: serde_json::Value) {
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        if let Err(err) = client.post(url).json(&payload).send().await {
+            tracing::warn!("forward webhook failed: {err}");
+        }
+    });
 }
 
 fn normalize_booking(
@@ -408,6 +441,80 @@ async fn webhook_call_ended(
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
+#[derive(Serialize)]
+struct CallOut {
+    id: i64,
+    ts: String,
+    caller_cli: Option<String>,
+    summary: Option<String>,
+    qualification: serde_json::Value,
+    booking: serde_json::Value,
+    compliance_flags: serde_json::Value,
+    transcript_url: Option<String>,
+    recording_url: Option<String>,
+}
+
+async fn calls_recent(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Vec<CallOut>>, (StatusCode, &'static str)> {
+    require_key(headers, State(state.api_key.clone())).await?;
+
+    let limit: i64 = params
+        .get("limit")
+        .and_then(|s| s.parse::<i64>().ok())
+        .filter(|&n| n > 0 && n <= 100)
+        .unwrap_or(10);
+
+    let rows = sqlx::query(
+        r#"SELECT id, ts, caller_cli, summary, qualification, booking, compliance_flags, transcript_url, recording_url
+            FROM calls ORDER BY id DESC LIMIT ?1"#,
+    )
+    .bind(limit)
+    .fetch_all(&*state.db)
+    .await
+    .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "db error"))?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let id: i64 = row.try_get("id").unwrap_or_default();
+        let ts: String = row.try_get("ts").unwrap_or_default();
+        let caller_cli: Option<String> = row.try_get("caller_cli").ok().flatten();
+        let summary: Option<String> = row.try_get("summary").ok().flatten();
+        let q_str: String = row.try_get("qualification").unwrap_or("{}".to_string());
+        let b_str: Option<String> = row.try_get("booking").ok().flatten();
+        let flags_str: Option<String> = row.try_get("compliance_flags").ok().flatten();
+        let transcript_url: Option<String> = row.try_get("transcript_url").ok().flatten();
+        let recording_url: Option<String> = row.try_get("recording_url").ok().flatten();
+
+        let q_val: serde_json::Value = serde_json::from_str(&q_str).unwrap_or(serde_json::json!({}));
+        let b_val_raw: Option<serde_json::Value> = match b_str {
+            Some(s) if !s.is_empty() && s != "null" => serde_json::from_str(&s).ok(),
+            _ => None,
+        };
+        let b_val = normalize_booking(b_val_raw.as_ref(), &q_val).unwrap_or(serde_json::Value::Null);
+        let flags_val: serde_json::Value = match flags_str {
+            Some(s) if !s.is_empty() => serde_json::from_str(&s).unwrap_or(serde_json::json!([])),
+            _ => serde_json::json!([]),
+        };
+
+        out.push(CallOut {
+            id,
+            ts,
+            caller_cli,
+            summary,
+            qualification: q_val,
+            booking: b_val,
+            compliance_flags: flags_val,
+            transcript_url,
+            recording_url,
+        });
+    }
+
+    Ok(Json(out))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -435,6 +542,7 @@ mod tests {
             .with_state(AppState {
                 db: shared_pool.clone(),
                 api_key: Arc::new("test-key".into()),
+                forward_url: None,
             });
         (app, shared_pool)
     }
@@ -705,6 +813,55 @@ mod tests {
             .unwrap();
         let val: serde_json::Value = serde_json::from_str(&booking_json).unwrap();
         let id = val.get("booking_id").and_then(|v| v.as_str()).unwrap();
+        assert!(id.starts_with("RS-"));
+    }
+
+    #[tokio::test]
+    async fn calls_recent_returns_normalized_booking() {
+        let (app, _) = setup_app().await;
+        // Log a call with nested booking
+        let payload = serde_json::json!({
+            "timestamp": "2025-01-01T10:00:00+10:00",
+            "caller_cli": "+61400111222",
+            "summary": "Nested booking test",
+            "qualification": {"booking": {"mode":"display-suite","slot_iso":"2025-09-26T10:00:00+10:00"}},
+            "booking": null,
+            "compliance_flags": [],
+            "transcript_url": null,
+            "recording_url": null
+        });
+        let _ = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/log_call")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer test-key")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // Fetch recent calls
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/calls/recent?limit=1")
+                    .header("authorization", "Bearer test-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let buf = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let arr: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+        let first = arr.get(0).unwrap();
+        let booking = first.get("booking").unwrap();
+        let id = booking.get("booking_id").and_then(|v| v.as_str()).unwrap();
         assert!(id.starts_with("RS-"));
     }
 
