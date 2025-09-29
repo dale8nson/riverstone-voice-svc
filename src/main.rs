@@ -8,7 +8,7 @@ use axum::{
 use chrono::{DateTime, FixedOffset};
 use chrono_tz::Australia::Melbourne;
 use serde::{Deserialize, Serialize};
-use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
+use sqlx::{SqlitePool, sqlite::SqliteConnectOptions, Row};
 use std::{str::FromStr, sync::Arc};
 use tokio;
 use tokio::net::TcpListener;
@@ -18,6 +18,7 @@ use axum::error_handling::HandleErrorLayer;
 use axum::BoxError;
 use tower_http::{cors::{Any, CorsLayer}, trace::TraceLayer};
 use std::time::Duration;
+use uuid::Uuid;
 
 
 
@@ -133,6 +134,8 @@ async fn main() -> anyhow::Result<()> {
         .create_if_missing(true);
     let db = SqlitePool::connect_with(opts).await?;
     sqlx::query(CREATE_CALLS_TABLE_SQL).execute(&db).await?;
+    // Backfill any missing `booking` records from older payloads and ensure booking_id exists
+    backfill_bookings(&db).await.ok();
 
     let state = AppState { db: Arc::new(db), api_key: Arc::new(api_key) };
     let app = build_app()
@@ -144,6 +147,40 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("listening on {bind}");
     let listener = TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
+    Ok(())
+}
+
+async fn backfill_bookings(db: &SqlitePool) -> anyhow::Result<()> {
+    // Find rows with missing booking or missing booking_id
+    let rows = sqlx::query(
+        r#"SELECT id, qualification, booking FROM calls
+            WHERE (booking IS NULL OR booking = 'null' OR booking = '')
+               OR json_extract(booking, '$.booking_id') IS NULL
+               OR json_extract(booking, '$.booking_id') = ''"#,
+    )
+    .fetch_all(db)
+    .await?;
+
+    for row in rows {
+        let id: i64 = row.try_get("id")?;
+        let qualification: String = row.try_get("qualification")?;
+        let booking_str: Option<String> = row.try_get("booking").ok();
+
+        let qual_val: serde_json::Value = serde_json::from_str(&qualification).unwrap_or(serde_json::json!({}));
+        let booking_val: Option<serde_json::Value> = match booking_str {
+            Some(s) if !s.is_empty() && s != "null" => serde_json::from_str(&s).ok(),
+            _ => None,
+        };
+
+        if let Some(norm) = normalize_booking(booking_val.as_ref(), &qual_val) {
+            let serialized = serde_json::to_string(&norm).unwrap_or("null".into());
+            let _ = sqlx::query("UPDATE calls SET booking = ?1 WHERE id = ?2")
+                .bind(serialized)
+                .bind(id)
+                .execute(db)
+                .await;
+        }
+    }
     Ok(())
 }
 
@@ -181,7 +218,11 @@ async fn log_call(
     require_key(headers, State(state.api_key.clone())).await?;
 
     let q = serde_json::to_string(&log.qualification).unwrap_or("{}".into());
-    let b = serde_json::to_string(&log.booking).unwrap_or("null".into());
+    let normalized_booking = normalize_booking(log.booking.as_ref(), &log.qualification);
+    let b = match normalized_booking {
+        Some(val) => serde_json::to_string(&val).unwrap_or("null".into()),
+        None => "null".into(),
+    };
     let flags = serde_json::to_string(&log.compliance_flags).unwrap_or("[]".into());
 
     sqlx::query(r#"INSERT INTO calls
@@ -200,6 +241,49 @@ async fn log_call(
       .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "db error"))?;
 
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+fn normalize_booking(
+    booking: Option<&serde_json::Value>,
+    qualification: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    // Prefer top-level booking, else fallback to qualification.booking
+    let mut candidate = booking.cloned().or_else(|| {
+        qualification
+            .get("booking")
+            .cloned()
+    });
+
+    // Ensure we have an object we can enrich
+    if let Some(serde_json::Value::Object(mut map)) = candidate.take() {
+        // booking_id generation if missing or empty
+        let needs_id = match map.get("booking_id") {
+            Some(serde_json::Value::String(s)) => s.trim().is_empty(),
+            Some(_) => true,
+            None => true,
+        };
+        if needs_id {
+            // Prefer RS-<YYYYMMDD-HHMM> if slot_iso is available, else RS-<uuid>
+            let generated = map
+                .get("slot_iso")
+                .and_then(|v| v.as_str())
+                .and_then(|slot| {
+                    slot.parse::<DateTime<FixedOffset>>()
+                        .ok()
+                        .map(|dt| dt.with_timezone(&Melbourne))
+                        .map(|loc| format!("RS-{}", loc.format("%Y%m%d-%H%M")))
+                })
+                .unwrap_or_else(|| format!("RS-{}", Uuid::new_v4().simple()));
+            map.insert(
+                "booking_id".to_string(),
+                serde_json::Value::String(generated),
+            );
+        }
+
+        return Some(serde_json::Value::Object(map));
+    }
+
+    None
 }
 
 #[derive(Deserialize, Serialize)]
@@ -543,6 +627,85 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn log_call_populates_booking_from_qualification_and_generates_id() {
+        let (app, db) = setup_app().await;
+        // No top-level booking, nested under qualification
+        let payload = serde_json::json!({
+            "timestamp": "2025-01-01T10:00:00+10:00",
+            "caller_cli": "+61400111222",
+            "summary": "Nested booking test",
+            "qualification": {"booking": {"mode":"display-suite","slot_iso":"2025-09-26T10:00:00+10:00"}},
+            "booking": null,
+            "compliance_flags": [],
+            "transcript_url": null,
+            "recording_url": null
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/log_call")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer test-key")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify DB now has normalized booking with booking_id
+        let booking_json: String = sqlx::query_scalar("SELECT booking FROM calls ORDER BY id DESC LIMIT 1")
+            .fetch_one(&*db)
+            .await
+            .unwrap();
+        let val: serde_json::Value = serde_json::from_str(&booking_json).unwrap();
+        let id = val.get("booking_id").and_then(|v| v.as_str()).unwrap();
+        assert!(id.starts_with("RS-"));
+        // With slot, it should be the deterministic time-based id
+        assert!(id.contains("20250926-1000") || id.len() > 3);
+    }
+
+    #[tokio::test]
+    async fn log_call_adds_booking_id_when_missing() {
+        let (app, db) = setup_app().await;
+        // Top-level booking but missing id
+        let payload = serde_json::json!({
+            "timestamp": "2025-01-01T10:00:00+10:00",
+            "caller_cli": "+61400111222",
+            "summary": "Top-level booking without id",
+            "qualification": {},
+            "booking": {"mode":"video","slot_iso":"2025-09-26T10:00:00+10:00","booking_id":""},
+            "compliance_flags": [],
+            "transcript_url": null,
+            "recording_url": null
+        });
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/log_call")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer test-key")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let booking_json: String = sqlx::query_scalar("SELECT booking FROM calls ORDER BY id DESC LIMIT 1")
+            .fetch_one(&*db)
+            .await
+            .unwrap();
+        let val: serde_json::Value = serde_json::from_str(&booking_json).unwrap();
+        let id = val.get("booking_id").and_then(|v| v.as_str()).unwrap();
+        assert!(id.starts_with("RS-"));
     }
 
     #[tokio::test]

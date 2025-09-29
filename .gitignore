@@ -1,2 +1,6 @@
 /target
+<<<<<<< HEAD
 .local.env
+=======
+.local.env
+>>>>>>> 2e7c186 (update fly.toml)
